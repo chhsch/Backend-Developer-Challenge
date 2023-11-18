@@ -34,7 +34,6 @@ s3.listObjects({ Bucket: 'testbucket11062023' }, function(err, data) {
 });
 
 
-
 app.get('/', (req, res) => {
   res.send('Hello World!');
 });
@@ -49,7 +48,7 @@ app.post('/register', async (req, res) => {
 
     const hashedPassword = await bcrypt.hash(password, 10);
     
-    // 使用 Sequelize 創建新用戶
+    // Creating new user by Sequelize 
     const newUser = await User.create({ name, email, password: hashedPassword });
 
     res.status(201).send(`User ${newUser.name} registered successfully`);
@@ -63,7 +62,7 @@ app.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body;
     
-    // 使用 Sequelize 查找用戶
+    
     const user = await User.findOne({ where: { email } });
 
     if (user && await bcrypt.compare(password, user.password)) {
@@ -175,6 +174,23 @@ app.post('/upload', uploadSingle, async (req, res) => {
   }
 });
 
+// send friends' request
+app.post('/add-friend/:friendId', authenticateToken, async (req, res) => {
+  try {
+
+    const friend = await Friend.create({
+      requesterId: req.user.id,
+      addresseeId: req.params.friendId,
+    });
+
+    res.status(201).json(friend);
+  } catch (error) {
+    console.error(error);
+    res.status(500).send('Error adding friend');
+  }
+});
+
+
 // Edit a post's description
 app.put('/posts/:postId', authenticateToken, async (req, res) => {
   try {
@@ -216,7 +232,48 @@ app.get('/posts/:postId', async (req, res) => {
   }
 });
 
+// Retrieve the list of posts and provide pagination.
+app.get('/posts', async (req, res) => {
+  const limit = parseInt(req.query.limit, 10) || 10; 
+  const page = parseInt(req.query.page, 10) || 1; 
+  const offset = (page - 1) * limit;
 
+  try {
+    const result = await Post.findAndCountAll({ limit: limit, offset: offset });
+    const posts = result.rows.map(post => ({
+      ...post.dataValues,
+      timeAgo: calculateTimeAgo(post.createdAt),
+    }));
+
+    res.json({
+      totalPages: Math.ceil(result.count / limit),
+      currentPage: page,
+      posts: posts,
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).send('Error retrieving posts');
+  }
+});
+
+app.get('/friends', authenticateToken, async (req, res) => {
+  try {
+
+    const friends = await Friend.findAll({
+      where: { requesterId: req.user.id },
+      include: [{ model: User, as: 'FriendInfo' }], 
+    });
+
+    res.json({
+      friends: friends,
+      // mutualFriendsCount: mutualFriendsCount,
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).send('Error retrieving friends list');
+  }
+
+});
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);

@@ -26,7 +26,7 @@ const Post = sequelize.define('Post', {
     validate: {
       maxPhotos(value) {
         if (value && value.length > 5) {
-          throw new Error("不能有超过5张照片。");
+          throw new Error("Don't post over 5 pictures.");
         }
       }
     }
