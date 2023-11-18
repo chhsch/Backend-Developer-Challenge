@@ -4,12 +4,13 @@ const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const multer = require('multer');
 const AWS = require('aws-sdk');
-const fs = require('fs'); // Required for file stream
+const fs = require('fs');
+const moment = require('moment'); // Required for time calculations
 const s3 = new AWS.S3();
-const { Post, User } = require('./database'); // Assuming you have these models
+const { Post, User } = require('./database');
 
 // Set up multer for file upload
-const upload = multer({ dest: 'uploads/' });
+const upload = multer({ dest: 'uploads/' }).array('photos', 5);
 
 // Configure AWS with environment variables
 AWS.config.update({
@@ -97,24 +98,48 @@ const authenticateToken = (req, res, next) => {
   });
 };
 
+const calculateTimeAgo = (date) => {
+  return moment(date).fromNow();
+};
 
+const storage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    cb(null, 'uploads/')
+  },
+  filename: function (req, file, cb) {
+    cb(null, file.fieldname + '-' + Date.now())
+  }
+});
 
-app.post('/posts', upload.single('photo'), async (req, res) => {
+const uploadSingle = multer({ storage: storage }).single('photo');
+const uploadArray = multer({ storage: storage }).array('photos', 5);
+
+app.post('/posts', authenticateToken, uploadArray, async (req, res) => {
   try {
     const { description } = req.body;
-    const file = req.file;
+    const files = req.files;
 
-    // 上傳到 S3
-    const s3Result = await s3.upload({
-      Bucket: process.env.AWS_BUCKET_NAME,
-      Key: file.filename,
-      Body: fs.createReadStream(file.path)
-    }).promise();
+    // Check for maximum of 5 photos
+    if (files.length > 5) {
+      return res.status(400).send('You can upload a maximum of 5 photos');
+    }
 
-    // 創建帖子並保存到數據庫
+    let photoUrl = [];
+    for (const file of files) {
+      const s3Result = await s3.upload({
+        Bucket: process.env.AWS_BUCKET_NAME,
+        Key: file.filename,
+        Body: fs.createReadStream(file.path)
+      }).promise();
+
+      photoUrl.push(s3Result.Location);
+      fs.unlinkSync(file.path); // Delete file after upload
+    }
+
     const post = await Post.create({
       description,
-      photoUrl: s3Result.Location
+      photoUrl, // Array of URLs
+      createdAt: new Date() // Capture creation time
     });
 
     res.status(201).json(post);
@@ -124,7 +149,7 @@ app.post('/posts', upload.single('photo'), async (req, res) => {
   }
 });
 
-app.post('/upload', upload.single('photo'), async (req, res) => {
+app.post('/upload', uploadSingle, async (req, res) => {
   const file = req.file;
   const s3FileURL = process.env.AWS_UPLOADED_FILE_URL_LINK;
 
@@ -147,6 +172,47 @@ app.post('/upload', upload.single('photo'), async (req, res) => {
   } catch (error) {
     console.error(error);
     res.status(500).send('Error uploading file');
+  }
+});
+
+// Edit a post's description
+app.put('/posts/:postId', authenticateToken, async (req, res) => {
+  try {
+    const { description } = req.body;
+    const postId = req.params.postId;
+
+    // Update the post
+    const updatedPost = await Post.update({ description }, {
+      where: { id: postId }
+    });
+
+    if (updatedPost[0] === 0) {
+      return res.status(404).send('Post not found');
+    }
+
+    res.send('Post updated successfully');
+  } catch (error) {
+    console.error(error);
+    res.status(500).send('Error updating post');
+  }
+});
+
+// Get a post and calculate time ago
+app.get('/posts/:postId', async (req, res) => {
+  try {
+    const postId = req.params.postId;
+    const post = await Post.findByPk(postId);
+
+    if (!post) {
+      return res.status(404).send('Post not found');
+    }
+
+    post.dataValues.timeAgo = calculateTimeAgo(post.createdAt);
+
+    res.json(post);
+  } catch (error) {
+    console.error(error);
+    res.status(500).send('Error retrieving post');
   }
 });
 

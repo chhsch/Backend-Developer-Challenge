@@ -16,9 +16,27 @@ const User = sequelize.define('User', {
   email: { type: Sequelize.STRING, unique: true },
   password: Sequelize.STRING
 });
+
 const Post = sequelize.define('Post', {
   description: Sequelize.TEXT,
-  photoUrl: Sequelize.STRING // 圖片在 S3 的 URL
+
+  photoUrl: {
+    type: Sequelize.ARRAY(Sequelize.STRING),
+    allowNull: true,
+    validate: {
+      maxPhotos(value) {
+        if (value && value.length > 5) {
+          throw new Error("不能有超过5张照片。");
+        }
+      }
+    }
+  },
+
+  createdAt: {
+    type: Sequelize.DATE,
+    allowNull: false,
+    defaultValue: Sequelize.NOW,
+  }
 });
 
 sequelize.sync();
